@@ -168,6 +168,33 @@ async def test_layer_preview_returns_page_geometry(client) -> None:
 
 
 @pytest.mark.anyio
+async def test_preview_session_reuses_uploaded_pdf(client) -> None:
+    first_page = await client.post(
+        "/api/preview-session",
+        files={"file": ("document.pdf", _pdf_bytes(2), "application/pdf")},
+        data={"dpi": "96"},
+    )
+
+    assert first_page.status_code == 200
+    token = first_page.headers["x-preview-session"]
+    second_page = await client.post(
+        "/api/preview-page",
+        data={"session": token, "page": "2", "dpi": "96"},
+    )
+    assert second_page.status_code == 200
+    assert second_page.headers["x-page-count"] == "2"
+    assert second_page.content.startswith(b"\x89PNG")
+
+    closed = await client.delete(f"/api/preview-session/{token}")
+    assert closed.status_code == 204
+    expired = await client.post(
+        "/api/preview-page",
+        data={"session": token, "page": "1", "dpi": "96"},
+    )
+    assert expired.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_layer_edit_returns_pdf_without_removing_base_page(client) -> None:
     edits = '[{"type":"mask","page":1,"x":10,"y":10,"width":40,"height":20}]'
     response = await client.post(

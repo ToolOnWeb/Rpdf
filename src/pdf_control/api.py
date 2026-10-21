@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import shutil
 import tempfile
+import threading
+import time
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,6 +26,8 @@ STATIC_DIR = Path(__file__).with_name("static")
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 MAX_FONT_SIZE = 20 * 1024 * 1024
 MAX_OUTPUT_NAME_LENGTH = 255
+PREVIEW_SESSION_TTL_SECONDS = 60 * 60
+MAX_PREVIEW_SESSIONS = 8
 
 app = FastAPI(
     title=config.APP_NAME,
@@ -40,6 +45,18 @@ class _Download:
     message: str | None
 
 
+@dataclass
+class _PreviewSession:
+    directory: Path
+    source: Path
+    expires_at: float
+    last_access: float
+
+
+_preview_sessions: dict[str, _PreviewSession] = {}
+_preview_sessions_lock = threading.Lock()
+
+
 @app.exception_handler(ValueError)
 async def value_error_handler(_request, exc: ValueError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
@@ -47,6 +64,67 @@ async def value_error_handler(_request, exc: ValueError) -> JSONResponse:
 
 def _temporary_directory() -> Path:
     return Path(tempfile.mkdtemp(prefix="pdf-control-"))
+
+
+def _remove_directories(directories: list[Path]) -> None:
+    for directory in directories:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def _cleanup_preview_sessions(now: float | None = None) -> None:
+    current_time = time.monotonic() if now is None else now
+    stale_directories: list[Path] = []
+    with _preview_sessions_lock:
+        expired = [
+            token
+            for token, session in _preview_sessions.items()
+            if session.expires_at <= current_time
+        ]
+        for token in expired:
+            stale_directories.append(_preview_sessions.pop(token).directory)
+
+        overflow = max(0, len(_preview_sessions) - MAX_PREVIEW_SESSIONS + 1)
+        if overflow:
+            oldest = sorted(
+                _preview_sessions,
+                key=lambda token: _preview_sessions[token].last_access,
+            )[:overflow]
+            for token in oldest:
+                stale_directories.append(_preview_sessions.pop(token).directory)
+    _remove_directories(stale_directories)
+
+
+def _register_preview_session(directory: Path, source: Path) -> str:
+    _cleanup_preview_sessions()
+    token = secrets.token_urlsafe(24)
+    now = time.monotonic()
+    with _preview_sessions_lock:
+        _preview_sessions[token] = _PreviewSession(
+            directory=directory,
+            source=source,
+            expires_at=now + PREVIEW_SESSION_TTL_SECONDS,
+            last_access=now,
+        )
+    return token
+
+
+def _preview_session_source(token: str) -> Path:
+    _cleanup_preview_sessions()
+    now = time.monotonic()
+    with _preview_sessions_lock:
+        session = _preview_sessions.get(token)
+        if session is None:
+            raise HTTPException(status_code=404, detail="انتهت جلسة المعاينة. اختر الملف مجددًا.")
+        session.last_access = now
+        session.expires_at = now + PREVIEW_SESSION_TTL_SECONDS
+        return session.source
+
+
+def _discard_preview_session(token: str) -> None:
+    with _preview_sessions_lock:
+        session = _preview_sessions.pop(token, None)
+    if session is not None:
+        shutil.rmtree(session.directory, ignore_errors=True)
 
 
 async def _save_pdf(
@@ -262,7 +340,7 @@ async def split(
 
         def operation() -> Response:
             core.split_pdf(source, pages_dir)
-            with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
                 for path in sorted(pages_dir.glob("*.pdf")):
                     archive.write(path, arcname=path.name)
             return _download(output, directory, background_tasks, output_name, "application/zip")
@@ -392,6 +470,29 @@ async def add_text(
         raise
 
 
+def _preview_image_response(
+    image: bytes,
+    page_count: int,
+    width: float,
+    height: float,
+    session_token: str | None = None,
+) -> Response:
+    headers = {
+        "X-Page-Count": str(page_count),
+        "X-Page-Width": str(width),
+        "X-Page-Height": str(height),
+        "Cache-Control": "no-store",
+    }
+    if session_token:
+        headers["X-Preview-Session"] = session_token
+    return Response(image, media_type="image/png", headers=headers)
+
+
+async def _render_preview(source: Path, page: int, dpi: int) -> Response:
+    image, page_count, width, height = core.render_editor_page(source, page, dpi)
+    return _preview_image_response(image, page_count, width, height)
+
+
 @app.post("/api/layer-preview")
 async def layer_preview(
     file: Annotated[UploadFile, File(...)],
@@ -401,16 +502,7 @@ async def layer_preview(
     directory = _temporary_directory()
     try:
         source, _ = await _save_pdf(file, directory, "input.pdf")
-        image, page_count, width, height = core.render_editor_page(source, page, dpi)
-        return Response(
-            image,
-            media_type="image/png",
-            headers={
-                "X-Page-Count": str(page_count),
-                "X-Page-Width": str(width),
-                "X-Page-Height": str(height),
-            },
-        )
+        return await _render_preview(source, page, dpi)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -418,6 +510,50 @@ async def layer_preview(
         raise HTTPException(status_code=400, detail="تعذّرت معاينة صفحة PDF.") from exc
     finally:
         shutil.rmtree(directory, ignore_errors=True)
+
+
+@app.post("/api/preview-session")
+async def create_preview_session(
+    file: Annotated[UploadFile, File(...)],
+    dpi: Annotated[int, Form()] = 96,
+) -> Response:
+    directory = _temporary_directory()
+    try:
+        source, _ = await _save_pdf(file, directory, "input.pdf")
+        image, page_count, width, height = core.render_editor_page(source, 1, dpi)
+        token = _register_preview_session(directory, source)
+        return _preview_image_response(image, page_count, width, height, token)
+    except ValueError as exc:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        shutil.rmtree(directory, ignore_errors=True)
+        logger.exception("PDF preview session creation failed")
+        raise HTTPException(status_code=400, detail="تعذّرت معاينة صفحة PDF.") from exc
+
+
+@app.post("/api/preview-page")
+async def preview_session_page(
+    session: Annotated[str, Form()],
+    page: Annotated[int, Form()] = 1,
+    dpi: Annotated[int, Form()] = 96,
+) -> Response:
+    try:
+        source = _preview_session_source(session)
+        return await _render_preview(source, page, dpi)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("PDF preview session page failed")
+        raise HTTPException(status_code=400, detail="تعذّرت معاينة صفحة PDF.") from exc
+
+
+@app.delete("/api/preview-session/{token}", status_code=204)
+async def close_preview_session(token: str) -> Response:
+    _discard_preview_session(token)
+    return Response(status_code=204)
 
 
 @app.post("/api/layer-edit")
