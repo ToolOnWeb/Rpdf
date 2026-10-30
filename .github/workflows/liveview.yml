@@ -1,0 +1,42 @@
+name: LiveView verification
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  liveview:
+    runs-on: ubuntu-latest
+    env:
+      PDF_CONTROL_ROOT: ${{ github.workspace }}
+      PDF_CONTROL_PYTHON: ${{ github.workspace }}/.venv/bin/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27.3.4.2"
+          elixir-version: "1.18.4"
+      - name: Install existing PDF and OCR engine
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ara fonts-dejavu-core
+          python -m venv .venv
+          .venv/bin/pip install -r requirements-runtime.lock -e '.[dev,ocr]'
+      - name: Verify Python processing contracts
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/pytest
+      - name: Verify Phoenix and LiveView
+        working-directory: web
+        run: |
+          mix deps.get --check-locked
+          mix check
+      - name: Build self-contained BEAM release
+        working-directory: web
+        env:
+          MIX_ENV: prod
+        run: mix release

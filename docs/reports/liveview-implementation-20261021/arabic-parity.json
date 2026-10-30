@@ -1,0 +1,9 @@
+{
+  "scope": "one synthetic Arabic sample; does not establish real-document accuracy",
+  "reference": "مرحبا بالعالم",
+  "recognized": "مرحبا بالعالم",
+  "cer": 0.0,
+  "ocr_fields_identical": true,
+  "rendered_pages_identical": true,
+  "render_sha256": "ce22587a1f768af54549700115356ad8560dac66fd0dd9fdb13e02c6d6177c0f"
+}

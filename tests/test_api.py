@@ -15,9 +15,14 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-@pytest.fixture
-async def client():
-    transport = httpx.ASGITransport(app=app)
+@pytest.fixture(params=["direct", "worker"])
+async def client(request, tmp_path):
+    if request.param == "worker":
+        from worker_transport import WorkerTransport
+
+        transport = WorkerTransport(tmp_path)
+    else:
+        transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as http_client:
         yield http_client
 
@@ -32,8 +37,12 @@ def _pdf_bytes(page_count: int = 1) -> bytes:
 
 
 @pytest.mark.anyio
-async def test_browser_home_is_served(client) -> None:
+async def test_browser_home_is_served(client, request) -> None:
     response = await client.get("/")
+    if request.node.callspec.params["client"] == "worker":
+        # Phoenix serves the homepage; processing workers expose only API routes.
+        assert response.status_code == 404
+        return
 
     assert response.status_code == 200
     assert "PDF Control" in response.text

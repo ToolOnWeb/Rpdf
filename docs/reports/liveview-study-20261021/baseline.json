@@ -1,0 +1,98 @@
+{
+  "python": "3.12.3",
+  "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+  "fixture_directory": "/home/rpdf/rpdf/.runtime/study-fixtures",
+  "scope": "synthetic single-operation local; excludes browser/network/production load; includes correctness assertions",
+  "warm_engine": {
+    "info20": {
+      "n": 7,
+      "median_ms": 1.506,
+      "min_ms": 1.366,
+      "max_ms": 2.348,
+      "samples_ms": [
+        2.035,
+        1.602,
+        1.366,
+        1.42,
+        1.416,
+        1.506,
+        2.348
+      ]
+    },
+    "merge40": {
+      "n": 7,
+      "median_ms": 12.707,
+      "min_ms": 11.565,
+      "max_ms": 21.03,
+      "samples_ms": [
+        12.368,
+        12.222,
+        14.023,
+        11.565,
+        12.906,
+        12.707,
+        21.03
+      ]
+    },
+    "extract10": {
+      "n": 7,
+      "median_ms": 7.363,
+      "min_ms": 6.358,
+      "max_ms": 9.219,
+      "samples_ms": [
+        9.219,
+        7.363,
+        8.614,
+        6.62,
+        6.358,
+        6.725,
+        8.743
+      ]
+    },
+    "rotate20": {
+      "n": 7,
+      "median_ms": 11.09,
+      "min_ms": 7.357,
+      "max_ms": 17.734,
+      "samples_ms": [
+        11.09,
+        7.357,
+        13.663,
+        12.735,
+        7.518,
+        17.734,
+        8.286
+      ]
+    },
+    "render20_120dpi": {
+      "n": 7,
+      "median_ms": 243.817,
+      "min_ms": 237.535,
+      "max_ms": 260.462,
+      "samples_ms": [
+        238.062,
+        260.462,
+        243.817,
+        237.535,
+        238.383,
+        251.459,
+        253.923
+      ]
+    },
+    "ocr1_eng": {
+      "n": 7,
+      "median_ms": 163.912,
+      "min_ms": 146.327,
+      "max_ms": 203.752,
+      "samples_ms": [
+        153.272,
+        203.752,
+        198.476,
+        163.912,
+        164.42,
+        154.999,
+        146.327
+      ]
+    }
+  }
+}

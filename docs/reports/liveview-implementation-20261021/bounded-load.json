@@ -1,0 +1,8 @@
+{
+  "scope": "one local 20-request OCR burst, queue default8; no production capacity claim",
+  "accepted": 8,
+  "busy_rejected": 12,
+  "health_samples": 104,
+  "health_median_ms": 2.232,
+  "health_max_ms": 12.558
+}

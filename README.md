@@ -4,6 +4,17 @@ Current development release: **1.1.0**.
 
 PDF Control is a local browser app for everyday PDF work. It uses a standard HTML/CSS/JavaScript interface backed by FastAPI and does not depend on Streamlit.
 
+## Phoenix LiveView application
+
+The local Elixir/Phoenix application is in `web/`, using the existing PDF engine through a persistent, bounded worker. The current PDF operations and browser editor remain available; the editor uses a LiveView JavaScript hook. This does not automatically replace the published Python release.
+
+Run from the repository root with Elixir/OTP and the existing Python virtual environment available:
+
+```sh
+PHX_SERVER=true PORT=4000 sh scripts/liveview.sh phx.server
+```
+
+See [verified operating instructions and remaining release gates](docs/LIVEVIEW_OPERATING_AR.md) for tests, packaging, settings and limitations.
 ## Features
 
 - PDF information view with page count, encryption status, and metadata.

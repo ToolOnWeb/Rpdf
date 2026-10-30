@@ -113,3 +113,13 @@ demo_output/
 # outputs/
 
 # *.csv
+
+# Isolated Elixir/Erlang toolchain
+.runtime/
+
+# Phoenix build products
+web/_build/
+web/deps/
+web/erl_crash.dump
+
+release-artifact/

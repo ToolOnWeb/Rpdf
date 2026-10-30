@@ -12,56 +12,94 @@ permissions:
 concurrency:
   group: release-artifact-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false
+env:
+  PDF_CONTROL_ROOT: ${{ github.workspace }}
+  PDF_CONTROL_PYTHON: ${{ github.workspace }}/.venv/bin/python
 jobs:
   build-once:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install OCR runtime for complete functional tests
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tesseract-ocr fonts-dejavu-core
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install build and test dependencies
-        run: python -m pip install -r requirements-runtime.lock -e '.[dev]'
-      - run: ruff check .
-      - run: pytest
-      - name: Build exactly one wheel
-        run: python -m build --wheel --outdir release-artifact
-      - name: Bind artifact to source commit
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27.3.4.2'
+          elixir-version: '1.18.4'
+      - name: Install existing PDF and OCR dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-ara fonts-dejavu-core
+          python -m venv .venv
+          .venv/bin/pip install -r requirements-runtime.lock -e '.[dev]'
+      - run: .venv/bin/ruff check .
+      - run: .venv/bin/pytest
+      - name: Verify LiveView source
+        working-directory: web
+        run: |
+          mix deps.get --check-locked
+          mix check
+      - name: Build each runtime exactly once
+        run: |
+          .venv/bin/python -m build --wheel --outdir .runtime/engine-build
+          cd web
+          MIX_ENV=prod mix release
+      - name: Assemble and bind the one deployable bundle
         run: |
           set -eu
-          set -- release-artifact/*.whl
+          set -- .runtime/engine-build/*.whl
           test "$#" -eq 1
-          python tools/release_artifact.py create "$1" --commit "$GITHUB_SHA" --manifest release-artifact/manifest.json
+          .venv/bin/python tools/package_liveview.py --output .runtime/ci-bundle --wheel "$1" --commit "$GITHUB_SHA" --archive release-artifact/pdf_control-liveview.tar.gz
+          .venv/bin/python tools/release_artifact.py create release-artifact/pdf_control-liveview.tar.gz --commit "$GITHUB_SHA" --manifest release-artifact/manifest.json
       - uses: actions/upload-artifact@v4
         with:
-          name: verified-wheel-${{ github.sha }}-${{ inputs.operation }}
+          name: verified-bundle-${{ github.sha }}-${{ inputs.operation }}
           path: release-artifact/
           if-no-files-found: error
           retention-days: 14
   test-same-artifact:
     needs: build-once
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install OCR runtime for complete functional tests
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tesseract-ocr fonts-dejavu-core
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install OCR runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-ara fonts-dejavu-core
       - uses: actions/download-artifact@v4
         with:
-          name: verified-wheel-${{ github.sha }}-${{ inputs.operation }}
+          name: verified-bundle-${{ github.sha }}-${{ inputs.operation }}
           path: release-artifact
-      - name: Reject mismatched bytes or source
-        run: python tools/release_artifact.py verify release-artifact --commit "$GITHUB_SHA" --manifest release-artifact/manifest.json
-      - name: Install the built wheel; do not rebuild
+      - name: Verify bytes and extract the same bundle
         run: |
-          python -m pip install -r requirements-runtime.lock release-artifact/*.whl 'pytest>=8,<9' 'httpx>=0.27,<1'
+          python tools/release_artifact.py verify release-artifact --commit "$GITHUB_SHA" --manifest release-artifact/manifest.json
+          python -c 'from tools.release_bundle import unpack; import os; unpack("release-artifact/pdf_control-liveview.tar.gz", ".runtime/tested-bundle", os.environ["GITHUB_SHA"])'
+          python -m venv .venv
+          .venv/bin/pip install -r .runtime/tested-bundle/engine/requirements-runtime.lock .runtime/tested-bundle/engine/*.whl 'pytest==8.4.2' 'httpx==0.28.1'
+      - name: Test installed wheel without rebuilding
+        run: |
           cd /tmp
-          python -m pytest "$GITHUB_WORKSPACE/tests"
+          "$GITHUB_WORKSPACE/.venv/bin/python" -m pytest "$GITHUB_WORKSPACE/tests"
+      - name: Verify the actual release HTTP, PDF, sessions and WebSocket
+        env:
+          SECRET_KEY_BASE: ci-only-public-test-value-ci-only-public-test-value-ci-only-public-test-value
+          PHX_HOST: localhost
+          PORT: '4011'
+          PM_RELEASE_ID: ${{ inputs.operation }}
+          PDF_CONTROL_ACCEPTANCE_OUTPUT: ${{ github.workspace }}/.runtime/ci-acceptance
+        run: |
+          set -eu
+          sh .runtime/tested-bundle/run.sh > .runtime/ci-runtime.log 2>&1 &
+          candidate=$!
+          trap 'kill "$candidate" 2>/dev/null || true' EXIT
+          for i in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:4011/api/health > /dev/null; then break; fi
+            sleep 1
+          done
+          .venv/bin/python .runtime/tested-bundle/tools/liveview_acceptance.py http://127.0.0.1:4011
+          .venv/bin/python .runtime/tested-bundle/tools/liveview_release_probe.py http://127.0.0.1:4011 --origin https://localhost --release "$PM_RELEASE_ID"
+          python tools/release_artifact.py verify release-artifact --commit "$GITHUB_SHA" --manifest release-artifact/manifest.json

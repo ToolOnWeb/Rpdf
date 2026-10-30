@@ -1,0 +1,19 @@
+{
+  "all_report_values_present": true,
+  "basic_palette_contrast_ratios": {
+    "light": {
+      "text": 13.55,
+      "muted": 7.07,
+      "link": 7.19
+    },
+    "dark": {
+      "text": 13.27,
+      "muted": 9.12,
+      "link": 8.95
+    }
+  },
+  "theme_source_checks": "dark default, optional storage, print style present",
+  "browser_visual_and_theme_interaction": "blocked by file-protocol browser policy; not verified",
+  "baseline_json_valid": true,
+  "bridge_modes": 2
+}

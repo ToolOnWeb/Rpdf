@@ -1,0 +1,10 @@
+{
+  "bundle_files_verified": 1347,
+  "beam_cookie_excluded": true,
+  "worktree_dirty": true,
+  "python_tests": 75,
+  "liveview_tests": 8,
+  "http_acceptance_operations": 15,
+  "production_deployed": false,
+  "browser_upload_download": "not verified; automation file access restricted"
+}
