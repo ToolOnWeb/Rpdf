@@ -74,6 +74,8 @@ def test_persistent_worker_protocol_and_session_isolation(tmp_path):
         assert denied["status"] == 404
         closed = request("DELETE", "/api/preview-session/" + token, owner)
         assert closed["status"] == 204
+        assert request("DELETE", "/api/preview-session/" + token, owner)["status"] == 204
+        assert request("DELETE", "/api/preview-session/absent-token", other)["status"] == 204
         assert (
             request("POST", "/api/preview-page", owner, data={"session": token, "page": "1"})[
                 "status"

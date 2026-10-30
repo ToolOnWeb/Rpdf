@@ -46,6 +46,13 @@ async def process(request: dict, root: Path) -> dict:
         # by intercepting its source lookup in the worker request context.
         pass
 
+    # A retained instance may own this token. Local absence is an idempotent
+    # delete; the guarded proxy mirrors it to retained instances with this same
+    # signed workspace cookie. A known foreign owner must still be rejected.
+    if token and method == "DELETE" and token not in OWNERS:
+        output.write_bytes(b"")
+        return {"id": identifier, "status": 204, "headers": []}
+
     if token and OWNERS.get(token) != workspace:
         output.write_bytes(b'{"detail":"Preview session not found"}')
         return {"id": identifier, "status": 404, "headers": [["content-type", "application/json"]]}
